@@ -243,8 +243,173 @@ cargo wasm
 
 ## Instantiate
 
+In this sub-section we will implement everything needed to successfully instantiate our contract,
+this includes defining the `InstantiateMsg`, writing the instantiate entrypoint and, writing unit
+tests for the instantiate entrypoint.
+
 ### InstantiateMsg
 
+In order to instantiate the contract we must define the `InstantiateMsg` used, this is how
+we can pass values to the contract during it's creation. In our case the only configuration
+value is the `admin` stored in the `Config` of the contract.
+
+All messages for our contract are defined in `src/msg.rs`, this section focuses on `InstantiateMsg`
+and later chapters will focus on the others. Currently the generated `InstantiateMsg` should look like:
+
+```rust
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct InstantiateMsg {
+    pub val: String,
+}
+```
+
+As you can see it also features the derivations for our state, it also has a serde flag to rename
+all the variables within it to be snake case.
+
+We want the user to optionally define an admin for the contract, and if one is not defined it will
+default to their address. We can do this in Rust by using the `Option` struct, this effectively allows
+a value to be `None` (`null` in other languages) or another given type. In our case we will use
+`Option<String>` which means it can be `None` or a `String` value. We are not using the `Addr` type
+due to it not being validated, so we will accept any `String` and validate it on the contract side.
+
+```rust
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct InstantiateMsg {
+    pub admin: Option<String>, // If admin is None, default to the sender's address
+}
+```
+
+Now that the message is defined we can begin implementing our instantiate logic.
+
 ### Instantiate Entry Point
+
+The instantiate entrypoint is defined in `src/contract.rs` so open that file. Towards the top of the
+file we should see the defined entrypoint, currently it should simply contain an `unimplemented!()`
+macro that will panic when anything hits this endpoint.
+
+```rust
+// Previous code omitted
+/*
+const CONTRACT_NAME: &str = "crates.io:cw-starter";
+const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
+ */
+
+#[cfg_attr(not(feature = "library"), entry_point)]
+pub fn instantiate(
+    _deps: DepsMut,
+    _env: Env,
+    _info: MessageInfo,
+    _msg: InstantiateMsg,
+) -> Result<Response, ContractError> {
+    unimplemented!()
+}
+// Following code omitted
+```
+
+To start our implementation we're going to implement the `cw2` specification which allows contracts
+to store a name and a version (the commented out code above). Firstly we need to uncomment those.
+
+```rust
+// Previous code omitted
+
+const CONTRACT_NAME: &str = "crates.io:cw-starter";
+const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+#[cfg_attr(not(feature = "library"), entry_point)]
+pub fn instantiate(
+    _deps: DepsMut,
+    _env: Env,
+    _info: MessageInfo,
+    _msg: InstantiateMsg,
+) -> Result<Response, ContractError> {
+    unimplemented!()
+}
+// Following code omitted
+```
+
+Next we need to store these values, `cw2` comes with a helper called `set_contract_version` let's import it for use:
+
+```rust
+// Previous code omitted
+use cosmwasm_std::{Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult};
+use cw2::set_contract_version;
+// Following code omitted
+```
+
+Then we can add it at the top of our instantiate function body.
+
+```rust
+// Previous code omitted
+#[cfg_attr(not(feature = "library"), entry_point)]
+pub fn instantiate(
+    deps: DepsMut, // ensure you remove the preceeding _. _deps -> deps
+    _env: Env,
+    _info: MessageInfo,
+    _msg: InstantiateMsg,
+) -> Result<Response, ContractError> {
+    set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
+    unimplemented!()
+}
+// Following code omitted
+```
+
+As we have now modified our function's arguments let's give a run down of what purpose they serve:
+
+- `deps` - The dependencies, this contains your contract storage, the ability to query other
+  contracts and balances, and some API functionality
+- `env` - The environment, this contains contract information such as its address, block information
+  such as current height and time, as well as some optional transaction info
+- `info` - Message metadata, contains the sender of the message (`Addr`) and the funds sent with it (`Vec<Coin>`)
+- `msg` - The `InstantiateMsg` defined in `src/msg.rs`
+
+So we have stored some contract metadata but have not implemented any poll specific logic. To do this
+we need to create our `Config` struct and store it in the `CONFIG` `Item`, firstly let's import these
+needed values.
+
+```rust
+use crate::state::{Config, CONFIG};
+```
+
+Now we have these values we need to determine who the admin is going to be, validate their address,
+create the struct, store the struct, and return an `Ok` response.
+
+```rust
+// Previous code omitted
+#[cfg_attr(not(feature = "library"), entry_point)]
+pub fn instantiate(
+    deps: DepsMut,
+    _env: Env,
+    info: MessageInfo, // removed _
+    msg: InstantiateMsg, // removed _
+) -> Result<Response, ContractError> {
+    set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
+    let admin = msg.admin.unwrap_or(info.sender.to_string()); // if None, use info.sender
+    let validated_admin = deps.api.addr_validate(&admin)?; // validate the address
+    let config = Config {
+        admin: validated_admin.clone(),
+    };
+    CONFIG.save(deps.storage, &config)?;
+    Ok(Response::new()
+        .add_attribute("action", "instantiate")
+        .add_attribute("admin", validated_admin.to_string()))
+}
+// Following code omitted
+```
+
+The first two lines after setting the contract version, determine what address should be used to
+set the admin and then validate the address. The validatie function takes an `&str` so we must prefix
+our admin with `&`. This validation will throw an invalid address error on failure meaning we unwrap
+the result using `?` to assert success (on failure the code will terminate with this error).
+
+After the validation is performed we create a `Config` struct with the validated admin, this struct
+is then saved in the `CONFIG` item using `deps.storage` which is our contracts storage.
+
+The final line returns the response of our instantiate entrypoint with some added metadata, the two
+attributes simply tell the user what action they performed and who the admin is. These attributes can
+be set to any string value, however it is common to return useful metadata according to your route
+(similarly to HTTP headers). This is wrapped in `Ok` to create a `Result` and signal the call was
+successful, if we wanted to error we would wrap our error in `Err`.
 
 ### Instantiate Tests
