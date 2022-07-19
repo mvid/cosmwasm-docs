@@ -4,6 +4,9 @@ sidebar_position: 2
 
 # Creating the Project
 
+In this section we will be creating the initial project directory and explaining the project
+structured generated for us by `cw-template`.
+
 ## Using cw-template
 
 To bootstrap the project and generate all the boilerplate and starter code needed we will be
