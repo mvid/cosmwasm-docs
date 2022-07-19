@@ -412,4 +412,6 @@ be set to any string value, however it is common to return useful metadata accor
 (similarly to HTTP headers). This is wrapped in `Ok` to create a `Result` and signal the call was
 successful, if we wanted to error we would wrap our error in `Err`.
 
+With this code the instantiate entrypoint is complete, however to demonstrate it working we will
+
 ### Instantiate Tests
